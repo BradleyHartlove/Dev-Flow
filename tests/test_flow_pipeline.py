@@ -203,6 +203,43 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(record.is_relative_to(root))
         self.assertEqual(base, state["base_commit"])
 
+    def test_native_worktrees_have_separate_external_records_and_preserve_their_base(self):
+        home = self.base / "unused-manager"
+        roots = [self.base / "native health", self.base / "native search"]
+        base = git(self.root, "rev-parse", "HEAD")
+        for index, root in enumerate(roots):
+            git(self.root, "worktree", "add", "-b", f"native-{index}", str(root), base)
+            git(root, "commit", "--allow-empty", "-m", f"fixture: native editor snapshot {index}")
+        pinned = {root: git(root, "rev-parse", "HEAD") for root in roots}
+        self.assertNotEqual(pinned[roots[0]], pinned[roots[1]])
+        self.assertEqual(git(roots[0], "rev-parse", "HEAD^{tree}"), git(roots[1], "rev-parse", "HEAD^{tree}"))
+        registered = git(self.root, "worktree", "list", "--porcelain")
+        records = []
+        with patch.object(flow, "ROOT", self.base / "flow-installation"):
+            for author, root in zip(["claude", "codex"], roots):
+                selected, record, managed_base = flow.context(root, home)
+                self.assertEqual(selected, root)
+                self.assertIsNone(managed_base)
+                self.assertFalse(record.is_relative_to(root))
+                self.assertEqual(flow.main(["--workspace", str(root), "--ticket-home", str(home),
+                                          "init", "--author", author, "--base", pinned[root]]), 0)
+                records.append(record)
+            base = pinned[roots[0]]
+            (roots[0] / "app.py").write_text("health = True\n")
+            git(roots[0], "add", "app.py")
+            git(roots[0], "commit", "-m", "fixture: user's manual health commit")
+            new_head = git(roots[0], "rev-parse", "HEAD")
+            args = ["--workspace", str(roots[0]), "--ticket-home", str(home), "init", "--author", "claude"]
+            self.assertEqual(flow.main([*args, "--base", base]), 0)
+            self.assertEqual(flow.main([*args, "--base", new_head]), 1)
+        self.assertNotEqual(records[0], records[1])
+        self.assertEqual(flow.load(records[0], roots[0])["base_commit"], base)
+        self.assertEqual((roots[1] / "app.py").read_text(), "value = 1\n")
+        self.assertEqual((self.root / "app.py").read_text(), "value = 1\n")
+        self.assertFalse(home.exists())
+        self.assertEqual(git(self.root, "worktree", "list", "--porcelain").count("worktree "),
+                         registered.count("worktree "))
+
 
 if __name__ == "__main__":
     unittest.main()

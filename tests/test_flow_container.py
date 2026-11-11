@@ -121,6 +121,35 @@ class RoutingTests(unittest.TestCase):
                 flow.prepare_records(self.root, self.common)
             run.assert_not_called()
 
+    def test_native_linked_worktrees_get_their_own_container_records_and_git_mounts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary).resolve()
+            repo = parent / "primary"
+            repo.mkdir()
+            def git(*args):
+                return subprocess.run(["git", "-C", str(repo), *args], check=True,
+                                      text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.strip()
+            git("init", "-b", "main")
+            git("config", "user.name", "Flow Test")
+            git("config", "user.email", "flow-test@example.invalid")
+            (repo / ".devcontainer.json").write_text('{"image":"fixture-only"}')
+            git("add", ".devcontainer.json")
+            git("commit", "-m", "fixture: initial")
+            records = []
+            for name in ["health", "search"]:
+                worktree = parent / f"native {name}"
+                git("worktree", "add", "-b", name, str(worktree))
+                root, common, record = flow.context(worktree)
+                self.assertEqual(root, worktree)
+                self.assertEqual(common, repo / ".git")
+                command = flow.up_command(root, common)
+                self.assertIn(f"type=bind,source={worktree},target={worktree}", command)
+                self.assertIn(f"type=bind,source={common},target={common}", command)
+                self.assertEqual(record, worktree / ".dev-flow/container.json")
+                records.append(record)
+            self.assertNotEqual(records[0], records[1])
+            self.assertEqual(git("status", "--porcelain"), "")
+
 
 if __name__ == "__main__":
     unittest.main()

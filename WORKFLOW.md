@@ -1,74 +1,56 @@
 # Standard development flow
 
-The user supplies the feature or ticket. The author agent owns environment setup, implementation, verification, review coordination and the final explanation. The user makes important decisions, accepts the result, stages files, makes final Git commits and opens PRs/MRs manually.
+Use one local Devin window to plan, run parallel author sessions and inspect their changes. The user creates/selects each implementation worktree in Devin. Skills operate inside that selected checkout and handle containers, tests, source scans, independent review and debrief. The user owns final Git staging, commits, pushes and merge requests. No GitLab service connection is required.
 
-## The skills to use
+## The skills
 
-| Skill | When to invoke it | What it owns |
-| --- | --- | --- |
-| flow-plan | Optional, for broad or unclear work | Investigation, design decisions, dependency-ordered tickets and verification criteria. |
-| flow-task | The daily implementation entry point | Ticket/worktree/workspace/container setup, baseline, implementation, checks/scans, automatic reviewer, fixes/re-review, debrief and human acceptance packet. |
-| flow-review | Normally internal; available for direct review | Independent source/evidence review of the writer's checkout. |
-| flow-debrief | Normally called by flow-task | Explanation of behavior, decisions, evidence and limits. |
-| flow-finish | After the user's commit, when cleanup is requested | Archive local artifacts, stop the container, remove the clean managed worktree and retain the branch. |
+| Skill | Purpose |
+| --- | --- |
+| flow-plan | Research the code, explain design decisions and write a readable plan with dependency-ordered tickets. |
+| flow-task | Implement in the selected worktree, start its container, verify, scan, get the other provider's review, fix and prepare human acceptance. |
+| flow-review | Independently inspect the author's source and evidence without implementing fixes. |
+| flow-debrief | Explain behavior, decisions, checks, review and limits in the author conversation and saved records. |
+| flow-finish | After a manual commit and explicit cleanup request, stop the task container and respect native/manager checkout ownership. |
 
-Examples:
+Start a fresh Claude Agent or Codex Agent session after skill changes so its descriptions refresh. Both use the same installed skill sources. Start one implementation session per worktree; several independent worktree sessions may run concurrently. The background reviewer is read-only and uses the author's paused checkout.
 
-```text
-Use flow-plan for the media-models workstream in ~/code/media-frontends/TICKETS.md.
-Use flow-task to implement T5 from that plan.
-Use flow-task to resume media-t5.
-Use flow-finish for media-t5. I have reviewed and committed it; its agents are idle.
-```
+## Planning is a document
 
-The words about scanners, containers, handoffs and reviewer prompts belong in skills, not every feature request. Give actual feature requirements and constraints when they are not already in a ticket. Planning does not force a separate interview for a well-defined small fix.
+A broad feature starts with flow-plan in a read-only planning conversation. PLAN.md includes the goal, current behavior, design, decisions/tradeoffs, an optional diagram, and the ticket table with dependencies and acceptance criteria. Its link opens in Devin's editor/Markdown preview beside chat. This is not a general interactive Artifacts canvas or an automatically generated native approval UI for a third-party agent.
 
-## What happens after flow-task
+The plan identifies which tickets can run together. Planning does not create implementation worktrees, containers or author sessions. The user starts the chosen Worktree sessions in Devin. Dependent work waits until its manually committed prerequisites are present in the selected base.
 
-1. The author reads the ticket and repo instructions, chooses/resumes a stable managed ticket, and runs flow-ticket Start. This creates the branch/worktree, workspace and container; it does not modify shared devcontainer configuration.
-2. It uses the returned checkout explicitly, initializes the pipeline record, resolves meaningful decisions and records baseline checks/scans.
-3. It implements the scope and runs the repo's checks in its container. Semgrep and Gitleaks run locally on the Mac; reports are outside source. Existing findings stay visible separately from introduced ones.
-4. It pauses writing, prepares task/handoff/check evidence, and launches the other provider's CLI through flow-pipeline review. Claude authors are reviewed by Codex; Codex authors by Claude.
-5. It validates and fixes confirmed findings, reruns affected checks/scans, and requests a fresh review. The routine limit is two fix/re-review cycles; unresolved design or infrastructure issues return to the user with evidence.
-6. It writes the debrief and marks ready-for-human only when the current-source readiness checks pass. It leaves the environment available.
-7. The user reviews the diff and explanation, stages, commits and opens the PR/MR manually. Cleanup is a separate requested flow-finish action.
+## Implementation in the selected worktree
 
-## Monitoring and records
+1. Create/select the ticket's Worktree location in Devin before sending the feature prompt. Choose Claude Agent or Codex Agent and give the ticket to flow-task.
+2. The skill verifies the session's actual checkout, branch and Git identity. A session still in the primary checkout pauses instead of quietly writing elsewhere. A fresh native worktree's current HEAD becomes its pinned base; a resume preserves its recorded base.
+3. The skill checks for shared writable resources, starts the task's container through flow-container, verifies its mapping and reports its checkout/base/container identities.
+4. Baseline project checks run in the container; baseline Semgrep and Gitleaks run through the local pipeline. All baseline processes finish before source edits.
+5. The author implements, runs final container checks/scans, pauses source writes, and invokes flow-pipeline review. Claude authors get a Codex CLI reviewer; Codex authors get a Claude CLI reviewer.
+6. Confirmed findings get fixes and fresh checks/review, with at most two routine fix cycles unless repo instructions require more. Infrastructure/design blockers remain visible.
+7. The author writes the debrief and reaches ready-for-human only after current-source readiness passes. It links changed files and review/debrief evidence in the same conversation.
+8. Review the session's Changes view or its worktree in the same window's Source Control. You stage/commit and open any merge request manually. There is no automatic merge or acceptance on an agent's completion.
 
-For an actual kanban board and dependency-aware dispatch, use the optional [Agetor adapter](AGETOR.md). It preserves flow-ticket ownership of checkouts and automatically maps pipeline stages to native card columns. The paragraphs below describe the standalone Devin conversation workflow.
+Opening an editor workspace does not retarget an agent session. Native Changes should correspond to the session's real worktree. If it shows another checkout, diagnose the mismatch instead of opening a new window as the default workaround.
 
-Devin shows the author conversation. The background reviewer runs locally and reports through that conversation and durable ticket artifacts; it does not automatically become another native Devin session. Native board/session titles and columns are not manipulated.
+## Containers and records
 
-Use Ticket: List in the repo control workspace, or:
+Claude/Codex run on the Mac. Project tools run in one isolated container per active worktree, using the existing repository devcontainer configuration plus the helper's Git/worktree mounts. Container isolation does not require separate editor windows. Do not install the agents in each container or use native Reopen/Rebuild to replace helper-managed containers. Rebuild/stop is explicit recovery/cleanup, not part of a routine handoff.
 
-```sh
-flow-ticket --repo /path/to/repo list
-flow-ticket --repo /path/to/repo status ticket-name
-flow-pipeline --workspace /path/to/ticket-checkout status
-```
+Native worktree pipeline records live under dev-flow/runs; flow-pipeline returns their exact location. They stay outside application source. TASK.md records checkout owner and identity. CHECKS.md records real evidence, HANDOFF.md defines review scope, REVIEW.md holds independent findings, FIX.md records dispositions and DEBRIEF.md explains the result. Scan/review logs remain private and local. See the [agent command contract](skills/flow-task/references/commands.md).
 
-List shows environment lifecycle and work stage separately. Work stages are planning, waiting-decision, implementing, checking, reviewing, fixing, ready-for-human, blocked and complete. Container ready means startup succeeded, not that tests or review passed. Closing a window/session does not stop or finish the task.
+The user follows progress in Devin's session list and author messages. There is no background board/scheduler. The reviewer reports through artifacts and the author conversation; it is not automatically another visible Devin session. Native UI state and the persisted pipeline stage have different purposes.
 
-Managed records live under `tickets/REPO-IDENTITY/records/NAME/pipeline/`, retained outside the source checkout. TASK.md holds requirements/decisions, CHECKS.md records actual commands/exits/logs, HANDOFF.md anchors the review, REVIEW.md holds findings, FIX.md records dispositions, and DEBRIEF.md prepares human acceptance. Every scan/review keeps a distinct run directory and private logs. Runtime helper commands are documented in [the command contract](skills/flow-task/references/commands.md).
+## Finish and compatibility
 
-## What is enforced and what is agent-owned
+After manual commit and an explicit flow-finish request, the skill verifies clean Git status and idle workers, stops the selected native worktree's recorded container, records completion and leaves checkout/branch removal to Devin and the user. Closing a session alone does not stop a container or authorize removal.
 
-flow-ticket deterministically manages checkout identity, pinned base, workspace/container lifecycle and archival. flow-pipeline runs both scanners, retains the baseline, dispatches the other provider, validates the structured response, detects source/index changes during review and checks scan/review freshness before ready-for-human. Missing tools, failed scans, invalid reports, timeouts or stale results do not become approval.
+Existing flow-ticket-managed checkouts remain supported when explicitly resumed. Their manager retains environment records and can archive/remove a clean managed checkout. The new native workflow does not call flow-ticket Start, adopt native worktrees into that manager, or open extra workspaces/windows.
 
-Repository-specific tests, good implementation decisions, coverage assessment and clear explanations remain agent responsibilities. CHECKS.md alone does not prove a test passed: reviewer/human should inspect its logs. Scanners are one source of evidence, not a security guarantee. Readiness allows unchanged historical findings to remain visible for human assessment; new IDs or scanner errors block it. A moved line can conservatively count as a new ID.
+## Limits and validation
 
-The reviewer is read-only source/evidence review and does not independently run project tests. Codex uses read-only sandbox mode; Claude is given file-read tools, without Bash/write/MCP tools. No permission-bypass flags or new API keys are used. CLI login/configuration and subscription limits apply. If authentication fails, fix that existing login; the pipeline does not switch billing modes.
-
-## Current boundaries
-
-- The initial author session is opened by the user in Devin. An author can start/resume tickets from a repo control session and use explicit checkout paths; opening a workspace does not retarget that session or grant additional file permissions.
-- Multi-repo writable sibling isolation still needs a repo-specific recipe. The manager rejects known sibling configurations; skills surface the missing recipe rather than weakening isolation.
-- Starting a dependent ticket from its parent's branch includes committed code only. The user commits the prerequisite before dependent implementation begins.
-- Skills are normally discovered by both agents from their user-level directories. Start a fresh agent session after installation so descriptions refresh. Legacy bradley skills remain available and are not rewritten; repo requirements still apply.
-- No PR automation, Git staging/commits, pushes, releases, deployments, contact with collaborators, or automatic cleanup are part of flow-task.
-
-## Validation
-
-The helper suite covers real disposable Git lifecycle behavior and pipeline failure/staleness paths. The standard skill validator checks all five skills. Live smoke tests exercised Semgrep's default rules, Gitleaks and both CLI reviewer routes using existing local authentication against a disposable fixture. This validates the automation plumbing; an actual feature still needs its repository checks and acceptance evidence.
-
-Primary references: [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode), [Claude CLI reference](https://code.claude.com/docs/en/cli-reference), [Semgrep CLI](https://docs.semgrep.dev/cli-reference), [Gitleaks](https://github.com/gitleaks/gitleaks).
+- Shared writable sibling mounts, compose volumes, fixed container names and published ports need a task-specific isolation recipe. Separate Git worktrees alone do not solve those conflicts.
+- No service-side GitLab integration, automatic commits/PRs/merges/deployments, or automatic worktree deletion is part of flow-task.
+- Readiness validates scan/review freshness, not test execution from a prose claim. Reviewers/humans inspect actual command logs. Existing findings and unavailable coverage remain visible.
+- The reviewer inspects source/evidence and does not independently rerun author tests. Existing Claude/Codex CLI authentication and subscription limits apply.
+- Native session creation, ACP Changes rendering and layout are validated by the [user-run scoped test](DEVIN-TEST.md); helper tests alone cannot establish the editor experience.

@@ -4,7 +4,7 @@ A local development workflow for people who want to manage coding agents while s
 
 You make the important decisions, review the final diff, stage files, make the Git commit and open the PR/MR yourself.
 
-The current setup targets **macOS, Claude Code and Codex CLI**, with Devin Desktop for the editor workflow or Agetor for a kanban board. Agents run on the Mac; project builds, tests and dependency commands run in dev containers. Your Git hosting service does not need an integration.
+The current setup targets **macOS, Devin Desktop, Claude Code and Codex CLI**, using one local Devin window and its native worktree sessions. Agents run on the Mac; project builds, tests and dependency commands run in dev containers. Your Git hosting service does not need an integration.
 
 ## What it includes
 
@@ -17,11 +17,11 @@ The current setup targets **macOS, Claude Code and Codex CLI**, with Devin Deskt
 | `flow-board` | Optional Agetor kanban adapter: list board/ticket IDs and review commands, open review workspaces, dispatch independent tickets and hold dependent work until a prerequisite is manually committed and accepted. |
 | Five `flow-*` skills | Tell the author and reviewer how to use these tools consistently. |
 
-Devin can be the conversation and monitoring surface; Agetor adds cards and dependency-aware dispatch through flow-board. The helpers are ordinary local Python programs, and the skills are Markdown instructions shared by Claude and Codex.
+Devin is the conversation, progress and diff-review surface. The default skills use its selected worktree without creating another checkout or opening another IDE window. The helpers are ordinary local Python programs, and the skills are Markdown instructions shared by Claude and Codex.
 
 ## Requirements
 
-- macOS, plus Devin Desktop for the documented editor workflow or Agetor and its CLI for the optional board. Windows is unsupported; non-macOS editor opening is not implemented.
+- macOS and Devin Desktop for the documented native-session workflow. Windows is unsupported; non-macOS editor opening is not implemented.
 - Git, Python 3.10 or newer, and zsh. The helpers use Python's standard library.
 - A working Docker CLI/daemon, through Colima or Docker Desktop.
 - The [Dev Container CLI](https://github.com/devcontainers/cli), available as `devcontainer`.
@@ -87,76 +87,47 @@ Start your Docker backend first if necessary, for example `colima start`. Tools 
 
 ## Daily use
 
-### 1. Plan when the work needs it
+The default is one local Devin window. See the [two-agent scoped test](DEVIN-TEST.md) for a complete first run using the inventory example.
 
-Start an author conversation in Devin against the relevant repo or control workspace. For a broad workstream:
+### Plan when needed
+
+Start a planning conversation on the relevant primary repo:
 
 ```text
 Use flow-plan for this feature: [requirements or a path to the working plan].
 ```
 
-The skill investigates the code, brings you meaningful decisions and produces dependency-ordered tickets. Small, well-defined work can go straight to implementation.
+The agent writes a linked design document with context, decisions, optional diagrams and dependency-ordered tickets. Open it in Devin's Markdown preview beside chat. Planning does not launch implementations.
 
-### 2. Give the author a ticket
+### Select a worktree, then implement
 
-Use either Claude Agent or Codex Agent:
+Create/select a separate Worktree location in Devin for each implementation session. Choose Claude Agent or Codex Agent and send the ticket or small feature:
 
 ```text
 Use flow-task to implement T5 from this plan: /absolute/path/to/PLAN.md.
 ```
 
-Or describe a small feature directly. You do not need to repeat the container, scanning or handoff procedure.
+The skill uses the session's actual checkout, pins its initial commit, starts an isolated container and handles baseline checks, implementation, final checks, Semgrep, Gitleaks, independent review and debrief. No separate board or user-entered lifecycle commands are needed. A session still in the primary checkout pauses instead of silently editing a different directory.
 
-`flow-task` creates/resumes the managed ticket environment, reads repo instructions, records a baseline, implements the agreed scope, runs project checks in its container and runs the local scanners. It pauses source writes and starts a fresh reviewer automatically:
+Claude authors get a fresh Codex CLI reviewer; Codex authors get a fresh Claude CLI reviewer. The existing local logins/subscriptions are used. Routine fixes and re-review are bounded to two cycles; unresolved design/infrastructure issues remain visible.
 
-| Author | Automatic reviewer |
-| --- | --- |
-| Claude | Codex CLI |
-| Codex | Claude Code CLI |
+### Monitor, review and commit
 
-The author handles confirmed findings and focused re-review, then prepares a debrief and human acceptance packet. Routine fix/re-review is bounded to two cycles; unresolved decisions or failures return to you with evidence.
+Use Devin's session list or side-by-side session layout. Detailed stages and the final review/debrief appear in the author conversation. The independent reviewer is a local background process, not automatically another visible session.
 
-### 3. Monitor and make decisions
+At ready-for-human, inspect the session's Changes view or its worktree in Source Control in the same window. You stage, commit, push and open merge requests manually. No GitLab service integration is required. Agent review is evidence for your decision; it is not human acceptance.
 
-Follow the author in Devin. The background reviewer reports through the ticket's artifacts and author conversation; it does **not** automatically appear as a separate native Devin session.
+### Finish when requested
 
-```sh
-flow-ticket --repo ~/code/my-app list
-flow-ticket --repo ~/code/my-app status ticket-name
-```
-
-Environment lifecycle and work stage are separate. A container can be `ready` while work is `implementing`, `reviewing`, `blocked` or `ready-for-human`.
-
-You can also create a permanent local control workspace:
-
-```sh
-flow-ticket --repo ~/code/my-app setup --open
-```
-
-Open workspace files in Devin's **IDE view** to load their tasks, then use **Cmd+Shift+P → Tasks: Run Task**. Selecting an agent conversation's folder is not the same as opening an editor workspace. Opening a ticket workspace does not automatically retarget an existing agent session; the skill uses explicit checkout paths.
-
-### 4. Review and commit by hand
-
-At `ready-for-human`, inspect the diff, checks, independent findings and debrief. Stage files, commit, push and open the PR/MR using your normal tools.
-
-The skills do not stage, commit, push, create PRs, merge or deploy for you. A clean agent review is evidence for your decision, not your acceptance.
-
-### 5. Finish or resume
-
-After your manual commit, with agents and application processes idle:
+After your manual commit and with workers idle:
 
 ```text
-Use flow-finish for ticket-name.
+Use flow-finish for this task. I reviewed and committed it; its workers are idle.
 ```
 
-Or use the manager directly:
+For a Devin-owned worktree, this stops its verified recorded container and retains evidence. Worktree/branch removal remains with Devin and you. A session ending alone does not authorize cleanup.
 
-```sh
-flow-ticket --repo ~/code/my-app finish ticket-name --open
-flow-ticket --repo ~/code/my-app resume ticket-name --open
-```
-
-Finish refuses uncommitted/untracked source changes. It archives ignored local artifacts, stops the recorded container and removes the clean worktree without force. The branch and commits remain. It does not require the branch to be pushed or merged.
+Previously flow-ticket-managed checkouts remain supported when explicitly resumed. Their manager handles archival/removal; the new skills do not adopt native worktrees into that manager. Standalone workspace/board tools remain optional compatibility tools outside the default skills.
 
 ## Where things live
 
@@ -200,6 +171,7 @@ Tests use disposable Git repositories and fake container/reviewer/scanner comman
 ## More detail
 
 - [Standard skill workflow](WORKFLOW.md)
+- [One-window, two-agent Devin test](DEVIN-TEST.md)
 - [Agetor kanban setup and dependency pilot](AGETOR.md)
 - [Ticket lifecycle and recovery](TICKETS.md)
 - [Devin workspace/container controls](DEVIN.md)
