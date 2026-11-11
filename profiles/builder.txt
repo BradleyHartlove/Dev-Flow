@@ -1,0 +1,3 @@
+Compatibility profile: use the installed flow-task skill.
+Find tools and canonical skill sources with flow-pipeline paths. Use the returned pipeline record directory.
+The user handles final staging, commits and PR/MR creation by hand.

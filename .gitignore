@@ -1,0 +1,7 @@
+__pycache__/
+tickets/
+workspaces/
+backups/
+runs/
+plans/
+.DS_Store
