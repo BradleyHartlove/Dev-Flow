@@ -23,6 +23,14 @@ def git(repo, *args):
 
 
 class TicketTests(unittest.TestCase):
+    def test_new_editor_window_uses_devin_cli_with_literal_paths(self):
+        workspace = Path("/a workspace/ticket.code-workspace")
+        with patch.object(ticket.sys, "platform", "darwin"), \
+             patch.object(ticket.shutil, "which", return_value="/an app/bin/devin-desktop"), \
+             patch.object(ticket.subprocess, "run") as run:
+            ticket.open_workspace(workspace, new_window=True)
+        run.assert_called_once_with(["/an app/bin/devin-desktop", "--new-window", str(workspace)], check=True)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="flow-ticket-test-")
         self.addCleanup(self.temporary.cleanup)

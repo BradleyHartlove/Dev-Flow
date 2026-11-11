@@ -12,3 +12,5 @@ Explain before/after behavior with a concrete example and trace the important fl
 Report actual project checks, source scans, baseline/new findings, dependency checks where relevant, independent review outcome, coverage gaps, accepted limitations and unresolved issues. An agent saying a check passed is not a substitute for its recorded result/log. Give three likely teammate questions with clear answers; do not require a quiz.
 
 Present the exact worktree, branch, record path and a few useful diff locations. The user reviews, stages, commits and opens PRs/MRs by hand. Do none of those actions, and leave the environment available. Ready for human review is not accepted, released or shipped.
+
+For a flow-board ticket, also include `flow-board open BOARD TICKET` using the plan name and ticket ID from TASK.md, so the user can open its existing checkout in a separate Devin IDE window for review. Do not launch editor windows automatically when an agent finishes.

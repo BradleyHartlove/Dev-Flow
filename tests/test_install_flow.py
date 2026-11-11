@@ -23,7 +23,7 @@ class InstallTests(unittest.TestCase):
                 source.mkdir(parents=True)
                 (source / "SKILL.md").write_text("new skill\n")
             (base / "scripts").mkdir()
-            for name in ("flow_container", "flow_workspace", "flow_ticket", "flow_pipeline"):
+            for name in ("flow_container", "flow_workspace", "flow_ticket", "flow_pipeline", "flow_board"):
                 (base / "scripts" / f"{name}.py").write_text("# fixture\n")
             old = home / ".claude/skills/flow-task"
             old.mkdir(parents=True)
@@ -38,7 +38,7 @@ class InstallTests(unittest.TestCase):
             self.assertEqual((backups[0] / "claude/flow-task/custom.md").read_text(), "preserve my edits\n")
             self.assertEqual(old.resolve(), base / "skills/flow-task")
             self.assertEqual((home / ".agents/skills/flow-plan").resolve(), base / "skills/flow-plan")
-            for command in ("flow-container", "flow-workspace", "flow-ticket", "flow-pipeline"):
+            for command in ("flow-container", "flow-workspace", "flow-ticket", "flow-pipeline", "flow-board"):
                 self.assertEqual((home / ".local/bin" / command).resolve(),
                                  base / "scripts" / (command.replace("-", "_") + ".py"))
 

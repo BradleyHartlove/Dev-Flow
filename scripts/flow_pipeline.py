@@ -56,16 +56,19 @@ def context(workspace, home):
     return root, ROOT / "runs" / f"{root.name}-{key}" / "pipeline", None
 
 
-def fingerprint(root):
+def fingerprint(root, source_only=False):
     digest = hashlib.sha256()
-    digest.update(output(root, "rev-parse", "HEAD"))
-    digest.update(output(root, "status", "--porcelain=v1", "-z", "--untracked-files=all"))
-    index = Path(output(root, "rev-parse", "--path-format=absolute", "--git-path", "index").decode().strip())
-    if index.exists():
-        digest.update(index.read_bytes())
+    if not source_only:
+        digest.update(output(root, "rev-parse", "HEAD"))
+        digest.update(output(root, "status", "--porcelain=v1", "-z", "--untracked-files=all"))
+        index = Path(output(root, "rev-parse", "--path-format=absolute", "--git-path", "index").decode().strip())
+        if index.exists():
+            digest.update(index.read_bytes())
     names = output(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
     for raw in sorted(set(filter(None, names.split(b"\0")))):
         path = root / os.fsdecode(raw)
+        if source_only and not path.exists() and not path.is_symlink():
+            continue
         digest.update(raw + b"\0")
         if path.is_symlink():
             digest.update(b"link:" + os.fsencode(os.readlink(path)))
@@ -172,6 +175,7 @@ def scan_result(tool, execution, path):
 
 def checks(root, record, state, phase, timeout):
     before = fingerprint(root)
+    source_before = fingerprint(root, source_only=True)
     run_dir = record / "checks" / f"{phase}-{uuid.uuid4().hex[:10]}"
     run_dir.mkdir(parents=True, mode=0o700)
     stage(record, state, "checking", f"Running {phase} security scans")
@@ -195,7 +199,8 @@ def checks(root, record, state, phase, timeout):
         result = scan_result("gitleaks", execution, run_dir / "gitleaks-commits.json")
         result["tool"] = "gitleaks-commits"
         results.append(result)
-    value = {"phase": phase, "fingerprint": before, "source_unchanged": fingerprint(root) == before,
+    value = {"phase": phase, "fingerprint": before, "source_fingerprint": source_before,
+             "source_unchanged": fingerprint(root) == before,
              "results": results, "created_at": timestamp()}
     baseline_path = record / "baseline.json"
     baseline = ticket.read_json(baseline_path) if phase == "final" and baseline_path.exists() else {}
@@ -245,6 +250,7 @@ def review(root, record, state, timeout):
         if not (record / name).is_file() or not (record / name).stat().st_size:
             raise ValueError(f"Missing {name}; the author must prepare the task and evidence first.")
     before = fingerprint(root)
+    source_before = fingerprint(root, source_only=True)
     run_dir = record / "reviews" / uuid.uuid4().hex
     run_dir.mkdir(parents=True, mode=0o700)
     schema, response = run_dir / "schema.json", run_dir / "response.json"
@@ -253,7 +259,7 @@ def review(root, record, state, timeout):
     write_text(run_dir / "untracked.txt", output(root, "ls-files", "--others", "--exclude-standard").decode())
     reviewer = "codex" if state["author"] == "claude" else "claude"
     prompt = (f"Perform independent review with flow-review. Read {ROOT / 'skills/flow-review/SKILL.md'}.\n"
-              f"Read requirements {record / 'TASK.md'} and this checkout's AGENTS.md first.\n"
+              f"Read requirements {record / 'TASK.md'} and applicable repository instructions, if present, first.\n"
               f"Checkout: {root}; pinned base: {state['base_commit']}.\n"
               f"Inspect {run_dir / 'tracked.diff'}, {run_dir / 'untracked.txt'} and actual source.\n"
               f"Then read {record / 'HANDOFF.md'}, {record / 'CHECKS.md'} and scanner summaries.\n"
@@ -284,7 +290,7 @@ def review(root, record, state, timeout):
     if not unchanged:
         value["verdict"] = "incomplete"
         value["coverage_gaps"].append("Checkout or index changed during review; findings are stale. Nothing was reverted.")
-    value.update(reviewer=reviewer, author=state["author"], fingerprint=before,
+    value.update(reviewer=reviewer, author=state["author"], fingerprint=before, source_fingerprint=source_before,
                  source_unchanged=unchanged, run_directory=str(run_dir), execution=execution)
     ticket.write_json(run_dir / "report.json", value)
     ticket.write_json(record / "review.json", value)
@@ -301,17 +307,20 @@ def review(root, record, state, timeout):
     return 0 if value["verdict"] == "clean" else 1
 
 
-def readiness(root, record):
-    current = fingerprint(root)
+def readiness(root, record, after_commit=False):
+    if after_commit and output(root, "status", "--porcelain", "--untracked-files=all").strip():
+        raise ValueError("Commit all task source changes by hand before accepting the card.")
+    current = fingerprint(root, source_only=after_commit)
+    field = "source_fingerprint" if after_commit else "fingerprint"
     state = load(record, root)
     review_data = ticket.read_json(record / "review.json")
     final = ticket.read_json(record / "final.json")
-    if review_data.get("verdict") != "clean" or review_data.get("fingerprint") != current or not review_data.get("source_unchanged"):
+    if review_data.get("verdict") != "clean" or review_data.get(field) != current or not review_data.get("source_unchanged"):
         raise ValueError("A clean independent review of the current source/index is required.")
     expected_reviewer = "codex" if state["author"] == "claude" else "claude"
     if review_data.get("author") != state["author"] or review_data.get("reviewer") != expected_reviewer:
         raise ValueError("Review must be from the other agent for the current author.")
-    if final.get("fingerprint") != current or not final.get("source_unchanged") or not final.get("results"):
+    if final.get(field) != current or not final.get("source_unchanged") or not final.get("results"):
         raise ValueError("Security scans must cover the current source/index.")
     if any(r.get("status") == "error" or r.get("new_finding_ids") for r in final["results"]):
         raise ValueError("Scanner errors or new findings remain. Resolve them before marking ready.")

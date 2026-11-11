@@ -17,7 +17,7 @@ def main():
         for name in ("flow-plan", "flow-task", "flow-review", "flow-debrief", "flow-finish"):
             pairs.append((base / "skills" / name, home / agent / "skills" / name,
                           backup / agent.removeprefix(".") / name))
-    for command in ("flow-container", "flow-workspace", "flow-ticket", "flow-pipeline"):
+    for command in ("flow-container", "flow-workspace", "flow-ticket", "flow-pipeline", "flow-board"):
         script = command.replace("-", "_") + ".py"
         pairs.append((base / "scripts" / script, home / ".local/bin" / command, backup / "bin" / command))
     for source, target, saved in pairs:

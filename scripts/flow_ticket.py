@@ -468,9 +468,21 @@ def finish(directory, state_path, state):
     return state
 
 
-def open_workspace(path):
+def open_workspace(path, new_window=False):
     if sys.platform != "darwin":
         raise TicketError("Automatic editor opening currently supports macOS. Open the printed workspace path manually.")
+    if new_window:
+        cli = shutil.which("devin-desktop")
+        if not cli:
+            for apps in (Path("/Applications"), Path.home() / "Applications"):
+                candidate = apps / "Devin.app/Contents/Resources/app/bin/devin-desktop"
+                if candidate.is_file():
+                    cli = str(candidate)
+                    break
+        if not cli:
+            raise TicketError(f"Cannot find Devin Desktop's CLI. Open this workspace manually: {path}")
+        subprocess.run([cli, "--new-window", str(path)], check=True)
+        return
     subprocess.run(["open", "-a", "Devin", str(path)], check=True)
 
 

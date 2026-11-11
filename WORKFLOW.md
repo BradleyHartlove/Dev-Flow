@@ -35,6 +35,8 @@ The words about scanners, containers, handoffs and reviewer prompts belong in sk
 
 ## Monitoring and records
 
+For an actual kanban board and dependency-aware dispatch, use the optional [Agetor adapter](AGETOR.md). It preserves flow-ticket ownership of checkouts and automatically maps pipeline stages to native card columns. The paragraphs below describe the standalone Devin conversation workflow.
+
 Devin shows the author conversation. The background reviewer runs locally and reports through that conversation and durable ticket artifacts; it does not automatically become another native Devin session. Native board/session titles and columns are not manipulated.
 
 Use Ticket: List in the repo control workspace, or:

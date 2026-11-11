@@ -4,7 +4,7 @@ A local development workflow for people who want to manage coding agents while s
 
 You make the important decisions, review the final diff, stage files, make the Git commit and open the PR/MR yourself.
 
-The current setup targets **macOS, Devin Desktop, Claude Code and Codex CLI**. Agents run on the Mac; project builds, tests and dependency commands run in dev containers. Your Git hosting service does not need an integration.
+The current setup targets **macOS, Claude Code and Codex CLI**, with Devin Desktop for the editor workflow or Agetor for a kanban board. Agents run on the Mac; project builds, tests and dependency commands run in dev containers. Your Git hosting service does not need an integration.
 
 ## What it includes
 
@@ -14,13 +14,14 @@ The current setup targets **macOS, Devin Desktop, Claude Code and Codex CLI**. A
 | `flow-container` | Start, inspect, rebuild, stop and execute commands in the recorded container, with mounts that keep linked worktrees usable. |
 | `flow-pipeline` | Persist work stages, run Semgrep/Gitleaks, dispatch the other provider for review and check readiness for human review. |
 | `flow-workspace` | Generate a standalone local editor workspace for an existing checkout. Useful without the ticket manager. |
+| `flow-board` | Optional Agetor kanban adapter: list board/ticket IDs and review commands, open review workspaces, dispatch independent tickets and hold dependent work until a prerequisite is manually committed and accepted. |
 | Five `flow-*` skills | Tell the author and reviewer how to use these tools consistently. |
 
-Devin is the conversation and monitoring surface. The helpers are ordinary local Python programs, and the skills are Markdown instructions shared by Claude and Codex.
+Devin can be the conversation and monitoring surface; Agetor adds cards and dependency-aware dispatch through flow-board. The helpers are ordinary local Python programs, and the skills are Markdown instructions shared by Claude and Codex.
 
 ## Requirements
 
-- macOS and Devin Desktop for the documented editor workflow. Windows is unsupported; non-macOS editor opening is not implemented.
+- macOS, plus Devin Desktop for the documented editor workflow or Agetor and its CLI for the optional board. Windows is unsupported; non-macOS editor opening is not implemented.
 - Git, Python 3.10 or newer, and zsh. The helpers use Python's standard library.
 - A working Docker CLI/daemon, through Colima or Docker Desktop.
 - The [Dev Container CLI](https://github.com/devcontainers/cli), available as `devcontainer`.
@@ -56,6 +57,7 @@ The installer creates:
 ~/.local/bin/flow-workspace
 ~/.local/bin/flow-ticket
 ~/.local/bin/flow-pipeline
+~/.local/bin/flow-board
 ~/.agents/skills/flow-*     # Codex discovery
 ~/.claude/skills/flow-*     # Claude discovery
 ```
@@ -198,6 +200,7 @@ Tests use disposable Git repositories and fake container/reviewer/scanner comman
 ## More detail
 
 - [Standard skill workflow](WORKFLOW.md)
+- [Agetor kanban setup and dependency pilot](AGETOR.md)
 - [Ticket lifecycle and recovery](TICKETS.md)
 - [Devin workspace/container controls](DEVIN.md)
 - [Agent command contract](skills/flow-task/references/commands.md)

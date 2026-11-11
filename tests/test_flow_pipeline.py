@@ -157,6 +157,25 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "current source"):
             flow.readiness(self.root, self.record)
 
+    def test_manual_commit_preserves_reviewed_content_but_extra_edits_do_not(self):
+        (self.root / "app.py").write_text("value = 2\n")
+        (self.root / "new.py").write_text("new_value = 3\n")
+        with patch.object(flow, "run", side_effect=self.fake_scanner):
+            flow.checks(self.root, self.record, self.state, "baseline", 2)
+            flow.checks(self.root, self.record, self.state, "final", 2)
+        with patch.object(flow, "run", side_effect=self.fake_reviewer):
+            flow.review(self.root, self.record, self.state, 2)
+        before = flow.fingerprint(self.root, source_only=True)
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-m", "fixture: manual acceptance commit")
+        self.assertEqual(before, flow.fingerprint(self.root, source_only=True))
+        flow.readiness(self.root, self.record, after_commit=True)
+        (self.root / "app.py").write_text("value = 4\n")
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-m", "fixture: unreviewed additional change")
+        with self.assertRaisesRegex(ValueError, "current source"):
+            flow.readiness(self.root, self.record, after_commit=True)
+
     def test_real_child_process_timeout_does_not_become_success(self):
         result = flow.run(["/bin/sleep", "5"], self.root, self.record, "timeout", timeout=0.01)
         self.assertIsNone(result["exit_code"])
