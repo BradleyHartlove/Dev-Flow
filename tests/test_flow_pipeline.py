@@ -56,6 +56,9 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(flow.main(["paths"]), 0)
 
     def fake_scanner(self, command, root, record, stem, timeout):
+        if command[0] == "osv-scanner":
+            self.assertIn("--offline", command)
+            return self.osv_report(root, record)
         path = Path(command[command.index("--output") + 1] if command[0] == "semgrep"
                     else command[command.index("--report-path") + 1])
         if command[0] == "semgrep":
@@ -65,6 +68,71 @@ class PipelineTests(unittest.TestCase):
             payload = []
         path.write_text(json.dumps(payload))
         return {"exit_code": 1 if command[0] == "semgrep" else 0}
+
+    def osv_report(self, root, record, *advisories):
+        path = record / "osv-scanner.stdout"
+        path.write_text(json.dumps({"results": [{
+            "source": {"path": str(root / "package-lock.json")},
+            "packages": [{"package": {"ecosystem": "npm", "name": "fixture", "version": "1.0.0"},
+                          "vulnerabilities": [{"id": advisory} for advisory in advisories]}],
+        }]}))
+        return {"exit_code": int(bool(advisories)), "stdout": str(path)}
+
+    def test_osv_compares_findings_to_baseline_and_keeps_existing_findings_visible(self):
+        def scan(command, root, record, stem, timeout):
+            if command[0] == "osv-scanner":
+                advisories = ["OSV-existing"]
+                if (root / "new-lockfile").exists():
+                    advisories.append("OSV-new")
+                return self.osv_report(root, record, *advisories)
+            return self.fake_scanner(command, root, record, stem, timeout)
+
+        with patch.object(flow, "run", side_effect=scan):
+            flow.checks(self.root, self.record, self.state, "baseline", 2)
+            self.assertEqual(flow.checks(self.root, self.record, self.state, "final", 2), 0)
+            (self.root / "new-lockfile").touch()
+            self.assertEqual(flow.checks(self.root, self.record, self.state, "final", 2), 1)
+        osv = next(r for r in flow.read_json(self.record / "final.json")["results"] if r["tool"] == "osv-scanner")
+        self.assertEqual(len(osv["finding_ids"]), 2)
+        self.assertEqual([json.loads(identity)[-1] for identity in osv["new_finding_ids"]], ["OSV-new"])
+
+    def test_final_backfills_legacy_osv_baseline_from_pinned_commit(self):
+        def scan(command, root, record, stem, timeout):
+            if command[0] == "osv-scanner":
+                advisories = ["OSV-existing"]
+                if "changed" in (root / "app.py").read_text():
+                    advisories.append("OSV-new")
+                return self.osv_report(root, record, *advisories)
+            return self.fake_scanner(command, root, record, stem, timeout)
+
+        with patch.object(flow, "run", side_effect=scan):
+            flow.checks(self.root, self.record, self.state, "baseline", 2)
+            baseline_path = self.record / "baseline.json"
+            baseline = flow.read_json(baseline_path)
+            baseline["results"] = [r for r in baseline["results"] if r["tool"] != "osv-scanner"]
+            flow.write_json(baseline_path, baseline)
+            (self.root / "app.py").write_text("changed = True\n")
+            self.assertEqual(flow.checks(self.root, self.record, self.state, "final", 2), 1)
+
+        recovered = flow.read_json(baseline_path)
+        self.assertEqual(recovered["fingerprint"], baseline["fingerprint"])
+        self.assertEqual(recovered["results"][:-1], baseline["results"])
+        self.assertEqual(recovered["results"][-1]["base_commit"], self.state["base_commit"])
+        final = flow.read_json(self.record / "final.json")
+        osv = next(r for r in final["results"] if r["tool"] == "osv-scanner")
+        self.assertEqual([json.loads(identity)[-1] for identity in osv["new_finding_ids"]], ["OSV-new"])
+        self.assertEqual(len(flow.registered_worktrees(self.root)), 1)
+        self.assertEqual((self.root / "app.py").read_text(), "changed = True\n")
+
+    def test_osv_no_packages_is_distinct_from_error_or_clean_package_scan(self):
+        path = self.record / "osv-scanner.stdout"
+        for payload, exit_code, expected in (({"results": []}, 0, "no_packages"),
+                                              ({"results": None}, 0, "no_packages"),
+                                              ({}, 0, "error"),
+                                              ({"results": []}, 127, "error")):
+            path.write_text(json.dumps(payload))
+            with patch.object(flow, "run", return_value={"stdout": str(path), "exit_code": exit_code}):
+                self.assertEqual(flow.scan_dependencies(self.root, self.record, 2)["status"], expected)
 
     def test_baseline_findings_are_visible_but_not_silently_rebaselined(self):
         with patch.object(flow, "run", side_effect=self.fake_scanner):
@@ -79,7 +147,7 @@ class PipelineTests(unittest.TestCase):
     def test_one_scanner_failure_does_not_skip_the_other(self):
         with patch.object(flow, "run", return_value={"exit_code": None, "error": "not installed"}) as run:
             self.assertEqual(flow.checks(self.root, self.record, self.state, "final", 2), 1)
-            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_count, 3)
         final = json.loads((self.record / "final.json").read_text())
         self.assertTrue(all(r["status"] == "error" for r in final["results"]))
 
@@ -124,9 +192,33 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(flow.review(self.root, self.record, self.state, 2), 0)
             data = json.loads((self.record / "review.json").read_text())
             self.assertEqual(data["reviewer"], reviewer)
-            self.assertEqual(run.call_args.args[0][0], reviewer)
+            self.assertEqual(run.call_count, 2)
+            behavior, regression = (call.args for call in run.call_args_list)
+            for command, root, record, stem, timeout, prompt in (behavior, regression):
+                self.assertEqual(command[0], reviewer)
+                self.assertEqual(root, self.root)
+                self.assertIn(self.state["base_commit"], prompt)
+                self.assertIn("README.md, CLAUDE.md, AGENTS.md", prompt)
+                self.assertIn("directory-specific guidance", prompt)
+            self.assertIn("Trace changed behavior", behavior[-1])
+            self.assertIn("actual test assertions", regression[-1])
+            self.assertNotEqual(behavior[2], regression[2])
+            self.assertEqual(list(data["passes"]), ["behavior", "regression-tests"])
             self.assertIn("Verdict: clean", (self.record / "REVIEW.md").read_text())
             self.assertEqual(git(self.root, "status", "--porcelain"), "")
+
+    def test_clean_behavior_pass_does_not_cover_a_failed_regression_pass(self):
+        def review(command, root, record, stem, timeout, prompt):
+            if record.name == "regression-tests":
+                return {"exit_code": None, "error": "timed out"}
+            return self.fake_reviewer(command, root, record, stem, timeout, prompt)
+
+        with patch.object(flow, "run", side_effect=review):
+            self.assertEqual(flow.review(self.root, self.record, self.state, 2), 1)
+        report = flow.read_json(self.record / "review.json")
+        self.assertEqual(report["verdict"], "incomplete")
+        self.assertEqual(report["passes"]["behavior"]["verdict"], "clean")
+        self.assertEqual(report["coverage_gaps"], ["regression-tests: timed out"])
 
     def test_failed_malformed_or_contradictory_review_never_passes(self):
         for execution in ({"exit_code": 1}, {"exit_code": 0}):
@@ -141,8 +233,9 @@ class PipelineTests(unittest.TestCase):
             result = self.fake_reviewer(*args)
             (self.root / "app.py").write_text("concurrent change\n")
             return result
-        with patch.object(flow, "run", side_effect=mutate):
+        with patch.object(flow, "run", side_effect=mutate) as run:
             self.assertEqual(flow.review(self.root, self.record, self.state, 2), 1)
+            run.assert_called_once()
         self.assertEqual((self.root / "app.py").read_text(), "concurrent change\n")
         self.assertFalse(json.loads((self.record / "review.json").read_text())["source_unchanged"])
 
@@ -155,6 +248,26 @@ class PipelineTests(unittest.TestCase):
         flow.readiness(self.root, self.record)
         (self.root / "new.py").write_text("unreviewed = True\n")
         with self.assertRaisesRegex(ValueError, "current source"):
+            flow.readiness(self.root, self.record)
+
+    def test_readiness_requires_both_passes_and_osv_evidence(self):
+        with patch.object(flow, "run", side_effect=self.fake_scanner):
+            flow.checks(self.root, self.record, self.state, "baseline", 2)
+            flow.checks(self.root, self.record, self.state, "final", 2)
+        with patch.object(flow, "run", side_effect=self.fake_reviewer):
+            flow.review(self.root, self.record, self.state, 2)
+        review_path = self.record / "review.json"
+        review = flow.read_json(review_path)
+        flow.write_json(review_path, {**review, "passes": {"behavior": review["passes"]["behavior"]}})
+        with self.assertRaisesRegex(ValueError, "behavior and regression-test passes"):
+            flow.readiness(self.root, self.record)
+        flow.write_json(review_path, review)
+
+        final_path = self.record / "final.json"
+        final = flow.read_json(final_path)
+        final["results"] = [r for r in final["results"] if r["tool"] != "osv-scanner"]
+        flow.write_json(final_path, final)
+        with self.assertRaisesRegex(ValueError, "baseline and final OSV scans"):
             flow.readiness(self.root, self.record)
 
     def test_manual_commit_preserves_reviewed_content_but_extra_edits_do_not(self):
