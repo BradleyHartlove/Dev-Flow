@@ -1,30 +1,15 @@
 {
-  "max_parallel": 2,
-  "tickets": [
+  "issues": [
     {
-      "id": "search",
-      "title": "INV-1 — Search inventory by name",
-      "harness": "claude-code",
-      "model": "opus",
-      "requires": [],
-      "description": "Add an optional q query parameter to GET /items. Match item names by case-insensitive substring. Omitted q and an empty q return all items. Preserve insertion order, the existing response shape, POST validation and existing tests. Add focused tests in tests/test_search.py for matching, case-insensitive matching, no matches, omitted/empty q and unchanged order. Keep this task limited to search; do not add health checks or stock filters. Run uv run pytest inside the container."
+      "title": "Add inventory health endpoint",
+      "description": "Add GET /health returning HTTP 200 and {\"status\":\"ok\"}. Add a focused test.",
+      "base": "main"
     },
     {
-      "id": "health",
-      "title": "INV-2 — Add a health endpoint",
-      "harness": "codex",
-      "model": "gpt-6.1-sol",
-      "effort": "high",
-      "requires": [],
-      "description": "Add GET /health returning status 200 with JSON {\"status\":\"ok\"}. Put the health route in app/health.py and register its router in app/main.py. Add tests in tests/test_health.py proving the response is stable and a health request does not change inventory. Preserve existing items endpoints and tests. Keep this task limited to the health endpoint; do not implement search or stock filtering. Run uv run pytest inside the container."
-    },
-    {
-      "id": "stock",
-      "title": "INV-3 — In-stock filter (depends on INV-1)",
-      "harness": "claude-code",
-      "model": "opus",
-      "requires": ["search"],
-      "description": "Build on the accepted, manually committed INV-1 search implementation. Add an optional in_stock boolean query parameter to GET /items: true keeps quantity > 0, false keeps quantity == 0, omitted keeps both. Combine it with q using AND and preserve insertion order and response shape. Add tests in tests/test_stock_filter.py for both values, omission, combined search/filter and empty results. Preserve the search and original tests. Do not include INV-2 health changes unless they already exist in the chosen base. Run uv run pytest inside the container."
+      "title": "Filter inventory by name",
+      "description": "Add optional q to GET /items for case-insensitive name substring matching. Omitted or empty q returns all items in insertion order. Add focused tests.",
+      "base": "main"
     }
-  ]
+  ],
+  "verification": "Run uv run pytest -q inside the worktree's devcontainer."
 }

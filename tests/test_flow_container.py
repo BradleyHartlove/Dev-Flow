@@ -43,10 +43,12 @@ class RoutingTests(unittest.TestCase):
     def test_rebuild_records_new_container_only_after_verifying_its_mounts(self):
         with tempfile.TemporaryDirectory() as directory:
             record_path = Path(directory) / "container.json"
+            config = Path(directory) / ".devcontainer.json"
+            config.write_text('{"image":"fixture-only"}')
             record_path.write_text(json.dumps({**self.record, "container_id": "old123"}))
             result = {"outcome": "success", "containerId": "abc123",
                       "remoteWorkspaceFolder": "/workspaces/project", "remoteUser": "vscode"}
-            with patch.object(flow, "context", return_value=(self.root, self.common, record_path)), \
+            with patch.object(flow, "context", return_value=(self.root, self.common, config, record_path)), \
                  patch.object(flow, "prepare_records"), \
                  patch.object(flow, "capture", side_effect=[json.dumps(result), json.dumps([self.info])]) as capture:
                 self.assertEqual(flow.main(["rebuild"]), 0)
@@ -57,8 +59,10 @@ class RoutingTests(unittest.TestCase):
         self.info["Mounts"][0]["Source"] = "/work/other"
         with tempfile.TemporaryDirectory() as directory:
             record_path = Path(directory) / "container.json"
+            config = Path(directory) / ".devcontainer.json"
+            config.write_text('{"image":"fixture-only"}')
             result = {"outcome": "success", "containerId": "abc123"}
-            with patch.object(flow, "context", return_value=(self.root, self.common, record_path)), \
+            with patch.object(flow, "context", return_value=(self.root, self.common, config, record_path)), \
                  patch.object(flow, "prepare_records"), \
                  patch.object(flow, "capture", side_effect=[json.dumps(result), json.dumps([self.info])]):
                 self.assertEqual(flow.main(["rebuild"]), 1)
@@ -85,8 +89,10 @@ class RoutingTests(unittest.TestCase):
     def test_exec_selects_recorded_id_and_preserves_arguments_and_exit_status(self):
         with tempfile.TemporaryDirectory() as directory:
             record_path = Path(directory) / "container.json"
+            config = Path(directory) / ".devcontainer.json"
+            config.write_text('{"image":"fixture-only"}')
             record_path.write_text(json.dumps(self.record))
-            with patch.object(flow, "context", return_value=(self.root, self.common, record_path)), \
+            with patch.object(flow, "context", return_value=(self.root, self.common, config, record_path)), \
                  patch.object(flow, "capture", return_value=json.dumps([self.info])), \
                  patch.object(flow.subprocess, "run", return_value=subprocess.CompletedProcess([], 7)) as run:
                 self.assertEqual(flow.main(["exec", "--", "printf", "%s", "hello world"]), 7)
@@ -98,8 +104,10 @@ class RoutingTests(unittest.TestCase):
         self.info["State"]["Running"] = False
         with tempfile.TemporaryDirectory() as directory:
             record_path = Path(directory) / "container.json"
+            config = Path(directory) / ".devcontainer.json"
+            config.write_text('{"image":"fixture-only"}')
             record_path.write_text(json.dumps(self.record))
-            with patch.object(flow, "context", return_value=(self.root, self.common, record_path)), \
+            with patch.object(flow, "context", return_value=(self.root, self.common, config, record_path)), \
                  patch.object(flow, "capture", return_value=json.dumps([self.info])), \
                  patch.object(flow.subprocess, "run") as run:
                 self.assertEqual(flow.main(["exec", "--", "just", "test"]), 1)
@@ -108,10 +116,23 @@ class RoutingTests(unittest.TestCase):
     def test_failed_start_does_not_create_container_record(self):
         with tempfile.TemporaryDirectory() as directory:
             record_path = Path(directory) / "container.json"
-            with patch.object(flow, "context", return_value=(self.root, self.common, record_path)), \
+            config = Path(directory) / ".devcontainer.json"
+            config.write_text('{"image":"fixture-only"}')
+            with patch.object(flow, "context", return_value=(self.root, self.common, config, record_path)), \
                  patch.object(flow, "prepare_records"), \
                  patch.object(flow, "capture", side_effect=subprocess.CalledProcessError(3, ["devcontainer"])):
                 self.assertEqual(flow.main(["up"]), 3)
+                self.assertFalse(record_path.exists())
+
+    def test_start_blocks_workspace_relative_sibling_mount_before_docker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            record_path = Path(directory) / "container.json"
+            config = Path(directory) / ".devcontainer.json"
+            config.write_text('{"mounts":["source=${localWorkspaceFolder}/../sibling,target=/other,type=bind"]}')
+            with patch.object(flow, "context", return_value=(self.root, self.common, config, record_path)), \
+                 patch.object(flow, "capture") as capture:
+                self.assertEqual(flow.main(["up"]), 1)
+                capture.assert_not_called()
                 self.assertFalse(record_path.exists())
 
     def test_refuses_to_use_tracked_record_files(self):
@@ -139,7 +160,7 @@ class RoutingTests(unittest.TestCase):
             for name in ["health", "search"]:
                 worktree = parent / f"native {name}"
                 git("worktree", "add", "-b", name, str(worktree))
-                root, common, record = flow.context(worktree)
+                root, common, _, record = flow.context(worktree)
                 self.assertEqual(root, worktree)
                 self.assertEqual(common, repo / ".git")
                 command = flow.up_command(root, common)

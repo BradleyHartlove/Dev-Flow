@@ -1,0 +1,1 @@
+Use flow-plan in this Paradev session. Inspect the current source, propose the smallest useful tickets and their acceptance checks, and wait for my agreement. Then create or reuse the issues in the agreed Linear project, verify the links, and stop at planning.

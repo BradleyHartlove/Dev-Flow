@@ -8,16 +8,15 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
 import sys
 import uuid
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import flow_ticket as ticket
-
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_LEGACY_HOME = ROOT / "tickets"
 STAGES = ("planning", "waiting-decision", "implementing", "checking", "reviewing",
           "fixing", "ready-for-human", "blocked", "complete")
 SCHEMA = {
@@ -43,15 +42,50 @@ def output(root, *args):
                           stdout=subprocess.PIPE).stdout
 
 
+def read_json(path):
+    if path.is_symlink():
+        raise ValueError(f"Refusing symlinked record: {path}")
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected a JSON object in {path}")
+    return value
+
+
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("x") as stream:
+            os.chmod(temporary, 0o600)
+            json.dump(value, stream, indent=2)
+            stream.write("\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def registered_worktrees(root):
+    return [entry.decode() for entry in output(root, "worktree", "list", "--porcelain", "-z").split(b"\0")
+            if entry.startswith(b"worktree ")]
+
+
 def context(workspace, home):
     root = Path(output(workspace.expanduser(), "rev-parse", "--show-toplevel").decode().strip()).resolve()
-    primary, common, directory = ticket.identity(root, home)
-    state_path = directory / "records" / root.name / "state.json"
-    if root.parent == directory / "worktrees" and state_path.is_file():
-        profile = ticket.read_json(directory / "repo.json")
-        _, state = ticket.load_ticket(directory, profile, root.name)
-        ticket.verify_checkout(state)
-        return root, state_path.parent / "pipeline", state["base_commit"]
+    common = Path(output(root, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip()).resolve()
+    worktrees = registered_worktrees(root)
+    primary = Path(worktrees[0].removeprefix("worktree ")).resolve()
+    # Keep earlier pilot evidence accessible at its original path.
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", primary.name)
+    key = hashlib.sha256(str(common).encode()).hexdigest()[:10]
+    legacy = home.expanduser().resolve() / f"{slug}-{key}"
+    record = legacy / "records" / root.name
+    if root.parent == legacy / "worktrees" and (record / "state.json").is_file():
+        state = read_json(record / "state.json")
+        branch = output(root, "symbolic-ref", "--quiet", "--short", "HEAD").decode().strip()
+        if (state["worktree"] != str(root) or state["common"] != str(common)
+                or state["branch"] != branch or f"worktree {root}" not in worktrees):
+            raise ValueError("Earlier pilot record belongs to a different checkout or branch.")
+        return root, record / "pipeline", state["base_commit"]
     key = hashlib.sha256(str(root).encode()).hexdigest()[:12]
     return root, ROOT / "runs" / f"{root.name}-{key}" / "pipeline", None
 
@@ -104,7 +138,7 @@ def locked(record):
 
 
 def load(record, root):
-    state = ticket.read_json(record / "STATUS.json")
+    state = read_json(record / "STATUS.json")
     if state.get("workspace") != str(root):
         raise ValueError("Pipeline record points at a different checkout.")
     return state
@@ -112,7 +146,7 @@ def load(record, root):
 
 def stage(record, state, value, summary):
     state.update(stage=value, summary=summary, updated_at=timestamp())
-    ticket.write_json(record / "STATUS.json", state)
+    write_json(record / "STATUS.json", state)
 
 
 def run(command, root, record, stem, timeout=900, prompt=None):
@@ -203,12 +237,12 @@ def checks(root, record, state, phase, timeout):
              "source_unchanged": fingerprint(root) == before,
              "results": results, "created_at": timestamp()}
     baseline_path = record / "baseline.json"
-    baseline = ticket.read_json(baseline_path) if phase == "final" and baseline_path.exists() else {}
+    baseline = read_json(baseline_path) if phase == "final" and baseline_path.exists() else {}
     for result in results:
         old = next((r for r in baseline.get("results", []) if r["tool"] == result["tool"] and r["status"] != "error"), None)
         result["new_finding_ids"] = sorted(set(result["finding_ids"]) - set(old["finding_ids"] if old else []))
-    ticket.write_json(run_dir / "summary.json", value)
-    ticket.write_json(record / f"{phase}.json", value)
+    write_json(run_dir / "summary.json", value)
+    write_json(record / f"{phase}.json", value)
     failed = not value["source_unchanged"] or any(r["status"] == "error" or r["new_finding_ids"] for r in results)
     stage(record, state, "blocked" if failed else "checking", f"{phase} scans recorded at {run_dir}")
     print(json.dumps(value, indent=2))
@@ -254,7 +288,7 @@ def review(root, record, state, timeout):
     run_dir = record / "reviews" / uuid.uuid4().hex
     run_dir.mkdir(parents=True, mode=0o700)
     schema, response = run_dir / "schema.json", run_dir / "response.json"
-    ticket.write_json(schema, SCHEMA)
+    write_json(schema, SCHEMA)
     write_text(run_dir / "tracked.diff", output(root, "diff", "--no-ext-diff", "--no-textconv", state["base_commit"], "--").decode(errors="replace"))
     write_text(run_dir / "untracked.txt", output(root, "ls-files", "--others", "--exclude-standard").decode())
     reviewer = "codex" if state["author"] == "claude" else "claude"
@@ -292,8 +326,8 @@ def review(root, record, state, timeout):
         value["coverage_gaps"].append("Checkout or index changed during review; findings are stale. Nothing was reverted.")
     value.update(reviewer=reviewer, author=state["author"], fingerprint=before, source_fingerprint=source_before,
                  source_unchanged=unchanged, run_directory=str(run_dir), execution=execution)
-    ticket.write_json(run_dir / "report.json", value)
-    ticket.write_json(record / "review.json", value)
+    write_json(run_dir / "report.json", value)
+    write_json(record / "review.json", value)
     text = f"# Independent review\n\nReviewer: {reviewer}\n\nVerdict: {value['verdict']}\n\n{value['summary']}\n"
     for item in value["findings"]:
         text += (f"\n## {item['severity']}: {item['file']} ({item['location']})\n\n"
@@ -313,8 +347,12 @@ def readiness(root, record, after_commit=False):
     current = fingerprint(root, source_only=after_commit)
     field = "source_fingerprint" if after_commit else "fingerprint"
     state = load(record, root)
-    review_data = ticket.read_json(record / "review.json")
-    final = ticket.read_json(record / "final.json")
+    baseline = read_json(record / "baseline.json")
+    if (not baseline.get("source_unchanged") or not baseline.get("results")
+            or any(result.get("status") == "error" for result in baseline["results"])):
+        raise ValueError("Usable baseline scan evidence is required.")
+    review_data = read_json(record / "review.json")
+    final = read_json(record / "final.json")
     if review_data.get("verdict") != "clean" or review_data.get(field) != current or not review_data.get("source_unchanged"):
         raise ValueError("A clean independent review of the current source/index is required.")
     expected_reviewer = "codex" if state["author"] == "claude" else "claude"
@@ -324,7 +362,7 @@ def readiness(root, record, after_commit=False):
         raise ValueError("Security scans must cover the current source/index.")
     if any(r.get("status") == "error" or r.get("new_finding_ids") for r in final["results"]):
         raise ValueError("Scanner errors or new findings remain. Resolve them before marking ready.")
-    for name in ("CHECKS.md", "DEBRIEF.md"):
+    for name in ("CHECKS.md", "TESTING.md", "DEBRIEF.md"):
         if not (record / name).is_file() or not (record / name).stat().st_size:
             raise ValueError(f"Missing {name} for human acceptance.")
 
@@ -332,12 +370,12 @@ def readiness(root, record, after_commit=False):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
-    parser.add_argument("--ticket-home", type=Path, default=ticket.DEFAULT_HOME)
+    parser.add_argument("--ticket-home", type=Path, default=DEFAULT_LEGACY_HOME, help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("paths", help="Show installation/resource paths without requiring a task checkout")
     init = sub.add_parser("init")
     init.add_argument("--author", choices=("claude", "codex"), required=True)
-    init.add_argument("--base", help="Required for a checkout not owned by flow-ticket")
+    init.add_argument("--base", help="Explicit base for a previously started checkout; defaults to the starting HEAD of a clean worktree")
     inspect = sub.add_parser("status")
     change = sub.add_parser("stage")
     change.add_argument("stage", choices=STAGES)
@@ -351,7 +389,7 @@ def main(argv=None):
         args = parser.parse_args(argv)
         if args.action == "paths":
             print(json.dumps({"root": str(ROOT), "scripts": str(ROOT / "scripts"),
-                              "skills": str(ROOT / "skills"), "plans": str(ROOT / "plans")}, indent=2))
+                              "skills": str(ROOT / "skills"), "runs": str(ROOT / "runs")}, indent=2))
             return 0
         root, record, managed_base = context(args.workspace, args.ticket_home)
         if args.action == "status":
@@ -359,16 +397,25 @@ def main(argv=None):
             return 0
         with locked(record):
             if args.action == "init":
-                base = managed_base or args.base
-                if not base:
-                    raise ValueError("Supply --base for an unmanaged checkout; no task base will be guessed.")
+                worktrees = registered_worktrees(root)
+                if f"worktree {root}" not in worktrees[1:]:
+                    raise ValueError("Start implementation in a separate Paradev Worktree.")
+                state_path = record / "STATUS.json"
+                existing = load(record, root) if state_path.exists() else None
+                base = args.base or managed_base or (existing["base_commit"] if existing else None)
+                if base is None:
+                    if output(root, "status", "--porcelain", "--untracked-files=all").strip():
+                        raise ValueError("Cannot pin a baseline after editing. Use a fresh worktree or recover the original base.")
+                    base = "HEAD"
                 base = output(root, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}").decode().strip()
-                if (record / "STATUS.json").exists():
-                    state = load(record, root)
+                if managed_base and base != managed_base:
+                    raise ValueError("Requested base differs from the earlier pilot's pinned base.")
+                if existing:
+                    state = existing
                     if state["base_commit"] != base:
                         raise ValueError("Pinned task base changed; existing records retained.")
-                    state["author"] = args.author
-                    ticket.write_json(record / "STATUS.json", state)
+                    if state["author"] != args.author:
+                        raise ValueError("Resume with the recorded author; changing it would invalidate review evidence.")
                 else:
                     state = {"schema": 1, "workspace": str(root), "base_commit": base, "author": args.author}
                     stage(record, state, "planning", "Task environment initialized")
@@ -378,18 +425,33 @@ def main(argv=None):
             if args.action == "stage":
                 if args.stage == "ready-for-human":
                     readiness(root, record)
+                if args.stage == "complete":
+                    if state["stage"] not in ("ready-for-human", "complete"):
+                        raise ValueError("Mark this task ready for human testing before recording acceptance.")
+                    head = output(root, "rev-parse", "HEAD").decode().strip()
+                    if head == state["base_commit"]:
+                        raise ValueError("Commit the accepted changes before recording completion.")
+                    subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor",
+                                    state["base_commit"], head], check=True)
+                    readiness(root, record, after_commit=True)
                 stage(record, state, args.stage, args.summary)
                 return 0
             if args.action == "check":
-                if args.phase == "baseline" and (record / "baseline.json").exists():
-                    previous = ticket.read_json(record / "baseline.json")
-                    same_source = previous.get("fingerprint") == fingerprint(root)
-                    failed_tools = any(r.get("status") == "error" for r in previous.get("results", []))
-                    if not (same_source and failed_tools):
-                        raise ValueError("Baseline already exists; it is retained rather than replacing it after edits.")
+                if args.phase == "baseline":
+                    baseline_path = record / "baseline.json"
+                    if baseline_path.exists():
+                        previous = read_json(baseline_path)
+                        same_source = previous.get("fingerprint") == fingerprint(root)
+                        failed_tools = any(r.get("status") == "error" for r in previous.get("results", []))
+                        if not (same_source and failed_tools):
+                            raise ValueError("Baseline already exists; it is retained rather than replacing it after edits.")
+                    else:
+                        head = output(root, "rev-parse", "HEAD").decode().strip()
+                        if head != state["base_commit"] or output(root, "status", "--porcelain", "--untracked-files=all").strip():
+                            raise ValueError("Run the first baseline scan on the clean, pinned base before editing.")
                 return checks(root, record, state, args.phase, args.timeout)
             return review(root, record, state, args.timeout)
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError, ticket.TicketError) as error:
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         print(f"flow-pipeline: {error}", file=sys.stderr)
         return 1
 

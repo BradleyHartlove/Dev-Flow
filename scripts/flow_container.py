@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -23,10 +24,11 @@ def context(directory):
     root = Path(capture(["git", "-C", str(directory), "rev-parse", "--show-toplevel"])).resolve()
     common = Path(capture(["git", "-C", str(root), "rev-parse",
                            "--path-format=absolute", "--git-common-dir"])).resolve()
-    if not any((root / name).is_file() for name in
-               (".devcontainer/devcontainer.json", ".devcontainer.json")):
+    config = next((root / name for name in (".devcontainer/devcontainer.json", ".devcontainer.json")
+                   if (root / name).is_file()), None)
+    if config is None:
         raise FlowError("No root devcontainer configuration found; configure this task before starting it.")
-    return root, common, root / ".dev-flow" / "container.json"
+    return root, common, config, root / ".dev-flow" / "container.json"
 
 
 def prepare_records(root, common):
@@ -100,8 +102,10 @@ def main(argv=None):
     sub.add_parser("stop", help="Stop only the recorded task container; keep its data")
     args = parser.parse_args(argv)
     try:
-        root, common, record_path = context(args.workspace)
+        root, common, config, record_path = context(args.workspace)
         if args.action in ("up", "rebuild"):
+            if re.search(r"\$\{localWorkspaceFolder\}[/\\]\.\.(?:[/\\\"',]|$)", config.read_text()):
+                raise FlowError("Devcontainer reaches a sibling checkout. Isolate writable sibling sources before starting.")
             command = up_command(root, common, rebuild=args.action == "rebuild")
             if args.dry_run:
                 print(shlex.join(command))

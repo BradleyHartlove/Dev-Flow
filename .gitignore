@@ -6,3 +6,5 @@ runs/
 plans/
 .DS_Store
 boards/
+streams/
+.tools/

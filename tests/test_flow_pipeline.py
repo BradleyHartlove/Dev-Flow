@@ -37,7 +37,7 @@ class PipelineTests(unittest.TestCase):
         self.state = {"workspace": str(self.root), "base_commit": git(self.root, "rev-parse", "HEAD"),
                       "author": "claude", "schema": 1}
         flow.stage(self.record, self.state, "planning", "fixture")
-        for name in ("TASK.md", "HANDOFF.md", "CHECKS.md", "DEBRIEF.md"):
+        for name in ("TASK.md", "HANDOFF.md", "CHECKS.md", "TESTING.md", "DEBRIEF.md"):
             (self.record / name).write_text("fixture requirements/evidence\n")
 
     def test_source_fingerprint_detects_untracked_content_and_staging(self):
@@ -176,32 +176,50 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "current source"):
             flow.readiness(self.root, self.record, after_commit=True)
 
+    def test_completion_requires_review_ready_and_a_matching_manual_commit(self):
+        args = ["stage", "complete"]
+        with patch.object(flow, "context", return_value=(self.root, self.record, None)):
+            self.assertEqual(flow.main(args), 1)
+            (self.root / "app.py").write_text("value = 2\n")
+            with patch.object(flow, "run", side_effect=self.fake_scanner):
+                flow.checks(self.root, self.record, self.state, "baseline", 2)
+                flow.checks(self.root, self.record, self.state, "final", 2)
+            with patch.object(flow, "run", side_effect=self.fake_reviewer):
+                flow.review(self.root, self.record, self.state, 2)
+            self.assertEqual(flow.main(["stage", "ready-for-human"]), 0)
+            self.assertEqual(flow.main(args), 1)
+            git(self.root, "add", ".")
+            git(self.root, "commit", "-m", "fixture: manual acceptance")
+            self.assertEqual(flow.main(args), 0)
+            self.assertEqual(flow.load(self.record, self.root)["stage"], "complete")
+
     def test_real_child_process_timeout_does_not_become_success(self):
         result = flow.run(["/bin/sleep", "5"], self.root, self.record, "timeout", timeout=0.01)
         self.assertIsNone(result["exit_code"])
         self.assertIn("timed out", result["error"])
 
-    def test_cli_init_requires_base_and_preserves_pin(self):
-        record = self.base / "new records"
-        with patch.object(flow, "context", return_value=(self.root, record, None)):
-            self.assertEqual(flow.main(["init", "--author", "claude"]), 1)
-            self.assertEqual(flow.main(["init", "--author", "claude", "--base", self.state["base_commit"]]), 0)
-            self.assertEqual(json.loads((record / "STATUS.json").read_text())["base_commit"], self.state["base_commit"])
+    def test_init_refuses_primary_checkout_and_dirty_unrecorded_worktree(self):
+        worktree = self.base / "dirty"
+        git(self.root, "worktree", "add", "-b", "dirty", str(worktree))
+        (worktree / "app.py").write_text("dirty = True\n")
+        with patch.object(flow, "ROOT", self.base / "flow-installation"):
+            for root in (self.root, worktree):
+                args = ["--workspace", str(root), "init", "--author", "claude"]
+                self.assertEqual(flow.main(args), 1)
 
-    def test_managed_ticket_context_uses_the_managers_pinned_base_and_external_record(self):
-        (self.root / ".devcontainer.json").write_text('{"image":"fixture-only"}')
-        git(self.root, "add", ".devcontainer.json")
-        git(self.root, "commit", "-m", "fixture: container config")
-        home = self.base / "ticket-manager"
-        primary, common, directory = flow.ticket.identity(self.root, home)
-        profile = flow.ticket.setup(primary, common, directory)
-        with patch.object(flow.ticket, "container"):
-            state = flow.ticket.start(directory, profile, "managed", fetch=False)
-        root, record, base = flow.context(Path(state["worktree"]), home)
-        self.assertEqual(root, Path(state["worktree"]))
-        self.assertEqual(record, directory / "records/managed/pipeline")
-        self.assertFalse(record.is_relative_to(root))
-        self.assertEqual(base, state["base_commit"])
+    def test_earlier_pilot_record_uses_its_pinned_base(self):
+        home = self.base / "earlier-tickets"
+        common = git(self.root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        key = flow.hashlib.sha256(common.encode()).hexdigest()[:10]
+        directory = home / f"repo-with-spaces-{key}"
+        worktree = directory / "worktrees" / "health"
+        git(self.root, "worktree", "add", "-b", "flow/health", str(worktree))
+        base = git(worktree, "rev-parse", "HEAD")
+        state_path = directory / "records" / "health" / "state.json"
+        flow.write_json(state_path, {"worktree": str(worktree), "common": common,
+                                     "branch": "flow/health", "base_commit": base})
+        self.assertEqual(flow.context(worktree, home),
+                         (worktree, state_path.parent / "pipeline", base))
 
     def test_native_worktrees_have_separate_external_records_and_preserve_their_base(self):
         home = self.base / "unused-manager"
@@ -222,7 +240,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertIsNone(managed_base)
                 self.assertFalse(record.is_relative_to(root))
                 self.assertEqual(flow.main(["--workspace", str(root), "--ticket-home", str(home),
-                                          "init", "--author", author, "--base", pinned[root]]), 0)
+                                          "init", "--author", author]), 0)
                 records.append(record)
             base = pinned[roots[0]]
             (roots[0] / "app.py").write_text("health = True\n")
@@ -230,7 +248,8 @@ class PipelineTests(unittest.TestCase):
             git(roots[0], "commit", "-m", "fixture: user's manual health commit")
             new_head = git(roots[0], "rev-parse", "HEAD")
             args = ["--workspace", str(roots[0]), "--ticket-home", str(home), "init", "--author", "claude"]
-            self.assertEqual(flow.main([*args, "--base", base]), 0)
+            self.assertEqual(flow.main(args), 0)
+            self.assertEqual(flow.main([*args[:-1], "codex"]), 1)
             self.assertEqual(flow.main([*args, "--base", new_head]), 1)
         self.assertNotEqual(records[0], records[1])
         self.assertEqual(flow.load(records[0], roots[0])["base_commit"], base)

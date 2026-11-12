@@ -23,11 +23,15 @@ class InstallTests(unittest.TestCase):
                 source.mkdir(parents=True)
                 (source / "SKILL.md").write_text("new skill\n")
             (base / "scripts").mkdir()
-            for name in ("flow_container", "flow_workspace", "flow_ticket", "flow_pipeline", "flow_board"):
+            for name in ("flow_container", "flow_pipeline"):
                 (base / "scripts" / f"{name}.py").write_text("# fixture\n")
             old = home / ".claude/skills/flow-task"
             old.mkdir(parents=True)
             (old / "custom.md").write_text("preserve my edits\n")
+            binary = home / ".local/bin"
+            binary.mkdir(parents=True)
+            (binary / "flow-ticket").symlink_to(base / "scripts/flow_ticket.py")
+            (binary / "flow-board").write_text("unrelated command")
             with patch.object(install, "__file__", str(base / "scripts/install_flow.py")), \
                  patch.object(install.Path, "home", return_value=home), \
                  contextlib.redirect_stdout(io.StringIO()):
@@ -36,9 +40,11 @@ class InstallTests(unittest.TestCase):
                 install.main()
             self.assertEqual(list((base / "backups").iterdir()), backups)
             self.assertEqual((backups[0] / "claude/flow-task/custom.md").read_text(), "preserve my edits\n")
+            self.assertFalse((binary / "flow-ticket").is_symlink())
+            self.assertEqual((binary / "flow-board").read_text(), "unrelated command")
             self.assertEqual(old.resolve(), base / "skills/flow-task")
             self.assertEqual((home / ".agents/skills/flow-plan").resolve(), base / "skills/flow-plan")
-            for command in ("flow-container", "flow-workspace", "flow-ticket", "flow-pipeline", "flow-board"):
+            for command in ("flow-container", "flow-pipeline"):
                 self.assertEqual((home / ".local/bin" / command).resolve(),
                                  base / "scripts" / (command.replace("-", "_") + ".py"))
 
