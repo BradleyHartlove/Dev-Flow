@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 from pathlib import Path
+import shlex
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -34,10 +35,13 @@ class InstallTests(unittest.TestCase):
             (binary / "flow-board").write_text("unrelated command")
             with patch.object(install, "__file__", str(base / "scripts/install_flow.py")), \
                  patch.object(install.Path, "home", return_value=home), \
-                 contextlib.redirect_stdout(io.StringIO()):
+                 contextlib.redirect_stdout(io.StringIO()) as output:
                 install.main()
                 backups = list((base / "backups").iterdir())
                 install.main()
+            self.assertEqual(shlex.split(output.getvalue().splitlines()[-1]),
+                             ["claude", "--append-system-prompt-file",
+                              str(base / "paradev/claude-instructions.txt")])
             self.assertEqual(list((base / "backups").iterdir()), backups)
             self.assertEqual((backups[0] / "claude/flow-task/custom.md").read_text(), "preserve my edits\n")
             self.assertFalse((binary / "flow-ticket").is_symlink())

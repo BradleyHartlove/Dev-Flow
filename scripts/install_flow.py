@@ -4,6 +4,7 @@
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import shlex
 import shutil
 import uuid
 
@@ -52,7 +53,8 @@ def main():
             print(f"Removed retired link: {target}")
     if backup.exists():
         print(f"Previous installations preserved: {backup}")
-    print(f"Append this snippet to Paradev’s Claude Code Task Prompt Template: {base / 'paradev/task-prompt.txt'}")
+    print("Paradev → Settings → Agent commands → Claude → Command")
+    print(shlex.join(["claude", "--append-system-prompt-file", str(base / "paradev/claude-instructions.txt")]))
 
 
 if __name__ == "__main__":
