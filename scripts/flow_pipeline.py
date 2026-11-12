@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LEGACY_HOME = ROOT / "tickets"
 STAGES = ("planning", "waiting-decision", "implementing", "checking", "reviewing",
           "fixing", "ready-for-human", "blocked", "complete")
+TICKET_BRANCH = re.compile(r"(?:fix|feat|chore)/[a-z0-9]+(?:-[a-z0-9]+)*")
 REVIEW_PASSES = {
     "behavior": "Trace changed behavior through callers, error paths, and data handling. "
                 "Check correctness, permissions, concurrency, compatibility, and data integrity.",
@@ -524,6 +525,14 @@ def main(argv=None):
                     raise ValueError("Start implementation in a separate Paradev Worktree.")
                 state_path = record / "STATUS.json"
                 existing = load(record, root) if state_path.exists() else None
+                if existing is None and managed_base is None:
+                    branch = output(root, "branch", "--show-current").decode().strip()
+                    if not TICKET_BRANCH.fullmatch(branch):
+                        raise ValueError(
+                            f"Ticket branch {branch or '(detached HEAD)'!r} must use "
+                            "fix/, feat/, or chore/ followed by a short lowercase dash-separated description. "
+                            "Use that branch when creating the Paradev Worktree."
+                        )
                 base = args.base or managed_base or (existing["base_commit"] if existing else None)
                 if base is None:
                     if output(root, "status", "--porcelain", "--untracked-files=all").strip():

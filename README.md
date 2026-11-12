@@ -19,7 +19,7 @@ Use `flow-plan` in your planning chat, or save the [planning prompt](paradev/pla
 ## Day-to-day workflow
 
 1. In a Paradev Claude session, ask `flow-plan` to inspect the project and propose issues. Agree on the scope and which issues can run together. The planner files or reuses issues in the agreed Linear project and verifies the links.
-2. In Paradev, run an eligible Linear issue on **This device** in a new **Worktree**. Start from the intended base. Run independent work in separate workspaces and start dependent work from the accepted prerequisite commit.
+2. In Paradev, run an eligible Linear issue on **This device** in a new **Worktree**. Use the issue's `fix/`, `feat/`, or `chore/` work branch and the intended base. The workspace name can be anything. If Paradev inherits a different branch from Linear, use the [exact-branch launch](WORKFLOW.md#work-branches). Run independent work in separate workspaces and start dependent work from the accepted prerequisite commit.
 3. Follow the agent and its diff in Paradev. The author starts the container, tests before and after editing, runs Semgrep, Gitleaks, and OSV-Scanner, gets both review passes from the other provider, and updates the linked issue. Check the acceptance packet in the author session.
 4. Test the result yourself and give feedback in the same workspace. After a manual commit, tell the author to use `flow-finish` to verify acceptance and update Linear. Ask it to stop the container before you archive the workspace in Paradev.
 

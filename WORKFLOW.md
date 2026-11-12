@@ -4,6 +4,20 @@
 
 Paradev creates and manages Git worktrees, visible agent sessions, and diffs. Linear holds scope, dependencies, progress and acceptance status. The local helpers start Docker containers and keep the check and review records. The user decides what starts, accepts behavior and commits the result.
 
+## Work branches
+
+Use `fix/<short-description>` for a bug fix, `feat/<short-description>` for new functionality, and `chore/<short-description>` for version bumps, dependency updates, and other maintenance. Use lowercase words separated by single dashes, such as `fix/invalid-cache-setting`. The workspace name can be anything.
+
+Use the issue's **Work branch** when creating its workspace. If Paradev's native launch would use a different branch from Linear, pass the work branch explicitly. Substitute the Paradev project ID, Linear issue UUID, issue URL, and intended base branch:
+
+```sh
+paradev workspaces create --local --project PROJECT_ID --task LINEAR_ISSUE_UUID \
+  --name "Cache settings" --branch fix/invalid-cache-setting --skip-branch-prefix \
+  --base-branch main --agent claude --prompt "Use flow-task for LINEAR_ISSUE_URL"
+```
+
+`flow-pipeline init` checks the branch when initializing a new ticket. Existing pipeline records can resume on their original branches.
+
 ## Containers
 
 Claude Code and Codex run on the host. In a worktree, `flow-container up` invokes the Dev Container CLI using that repo's existing configuration. It verifies the checkout mount and stores the container ID in ignored local state. The mount lets tests see the same files the agent edits. The helper also mounts Git metadata so linked worktrees work inside the container.

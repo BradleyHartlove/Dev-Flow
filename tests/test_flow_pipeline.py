@@ -313,12 +313,45 @@ class PipelineTests(unittest.TestCase):
 
     def test_init_refuses_primary_checkout_and_dirty_unrecorded_worktree(self):
         worktree = self.base / "dirty"
-        git(self.root, "worktree", "add", "-b", "dirty", str(worktree))
+        git(self.root, "worktree", "add", "-b", "fix/dirty-checkout", str(worktree))
         (worktree / "app.py").write_text("dirty = True\n")
         with patch.object(flow, "ROOT", self.base / "flow-installation"):
             for root in (self.root, worktree):
                 args = ["--workspace", str(root), "init", "--author", "claude"]
                 self.assertEqual(flow.main(args), 1)
+
+    def test_init_checks_ticket_branch_names_independently_of_workspace_name(self):
+        names = {
+            "bra-123-generated-name": False,
+            "feature/add-setting": False,
+            "fix/invalid_cache_setting": False,
+            "fix/invalid--cache-setting": False,
+            "fix/cache/setting": False,
+            "fix/Uppercase-Description": False,
+            "fix/invalid-cache-setting": True,
+            "feat/foobar-status-field-inference-stacks": True,
+            "chore/bump-blahbaz-dep": True,
+        }
+        with patch.object(flow, "ROOT", self.base / "flow-installation"):
+            for index, (branch, valid) in enumerate(names.items()):
+                with self.subTest(branch=branch):
+                    worktree = self.base / f"Workspace {index}"
+                    git(self.root, "worktree", "add", "-b", branch, str(worktree))
+                    args = ["--workspace", str(worktree), "init", "--author", "claude"]
+                    self.assertEqual(flow.main(args), 0 if valid else 1)
+                    _, record, _ = flow.context(worktree, flow.DEFAULT_LEGACY_HOME)
+                    self.assertEqual((record / "STATUS.json").exists(), valid)
+
+    def test_existing_ticket_can_resume_on_its_original_branch(self):
+        worktree = self.base / "Existing ticket"
+        git(self.root, "worktree", "add", "-b", "bra-123-generated-name", str(worktree))
+        with patch.object(flow, "ROOT", self.base / "flow-installation"):
+            _, record, _ = flow.context(worktree, flow.DEFAULT_LEGACY_HOME)
+            state = {"schema": 1, "workspace": str(worktree), "author": "claude",
+                     "base_commit": git(worktree, "rev-parse", "HEAD")}
+            flow.stage(record, state, "implementing", "Existing ticket")
+            self.assertEqual(flow.main(["--workspace", str(worktree), "init", "--author", "claude"]), 0)
+            self.assertEqual(flow.load(record, worktree), state)
 
     def test_earlier_pilot_record_uses_its_pinned_base(self):
         home = self.base / "earlier-tickets"
@@ -339,7 +372,7 @@ class PipelineTests(unittest.TestCase):
         roots = [self.base / "native health", self.base / "native search"]
         base = git(self.root, "rev-parse", "HEAD")
         for index, root in enumerate(roots):
-            git(self.root, "worktree", "add", "-b", f"native-{index}", str(root), base)
+            git(self.root, "worktree", "add", "-b", f"feat/native-{index}", str(root), base)
             git(root, "commit", "--allow-empty", "-m", f"fixture: native editor snapshot {index}")
         pinned = {root: git(root, "rev-parse", "HEAD") for root in roots}
         self.assertNotEqual(pinned[roots[0]], pinned[roots[1]])
